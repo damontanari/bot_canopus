@@ -69,12 +69,15 @@ class ReservaBotApp:
         try:
             with open(arquivo, "r", encoding="utf-8") as f:
                 texto = f.read()
-            grupos = [linha.strip() for linha in texto.replace(',', '\n').splitlines() if linha.strip()]
+            # Substitui vírgulas e ponto e vírgulas por quebras de linha
+            texto = texto.replace(',', '\n').replace(';', '\n')
+            grupos = [linha.strip() for linha in texto.splitlines() if linha.strip()]
             self.entry_grupos.delete(0, tk.END)
             self.entry_grupos.insert(0, ", ".join(grupos))
             self.log(f"✅ Grupos carregados do arquivo: {arquivo}")
         except Exception as e:
             messagebox.showerror("Erro", f"Não foi possível carregar o arquivo:\n{e}")
+
 
     def start_bot(self):
         grupos_text = self.entry_grupos.get().strip()
