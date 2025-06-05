@@ -1,199 +1,114 @@
-from selenium import webdriver
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-from time import sleep
-from datetime import datetime
-from dotenv import load_dotenv
-import requests
-import os
-import tempfile
-from resolver_captcha import resolver_recaptcha
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from threading import Thread
+from bot_script import iniciar_reservas
 
-# Carregar variáveis de ambiente do .env
-load_dotenv()
+class ReservaBotApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Reserva Canopus Bot")
+        self.root.geometry("700x520")
+        self.root.resizable(False, False)
 
-api_key = os.getenv("API_KEY")
-site_key = os.getenv("SITE_KEY")
-url_pagina = os.getenv("URL_PAGINA")
-bot_token = os.getenv("BOT_TOKEN")
-chat_id = os.getenv("CHAT_ID")
-usuario = os.getenv("USUARIO")
-senha = os.getenv("SENHA")
-chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+        # Estilo ttk
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure("TButton", font=("Segoe UI", 11))
+        style.configure("TLabel", font=("Segoe UI", 11))
+        style.configure("TEntry", font=("Segoe UI", 11))
+        style.configure("TProgressbar", thickness=20)
 
-# Grupos fixos definidos direto no script
-grupos_str = "9115;9116;9206;9207;9208"
-grupos = [g.strip() for g in grupos_str.split(";") if g.strip()]
+        # Frame grupos + botões
+        frame_top = ttk.Frame(root, padding=10)
+        frame_top.pack(fill=tk.X)
 
-def enviar_telegram(mensagem):
-    try:
-        response = requests.post(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            data={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}
-        )
-        print("📩 Mensagem enviada ao Telegram:", response.text)
-    except Exception as e:
-        print("❌ Falha no envio ao Telegram:", e)
+        ttk.Label(frame_top, text="Grupos (separados por vírgula):").pack(anchor=tk.W)
 
-def log(msg):
-    print(f"{datetime.now().strftime('%H:%M:%S')} - {msg}")
+        entry_frame = ttk.Frame(frame_top)
+        entry_frame.pack(fill=tk.X, pady=5)
 
-# Início do script direto
-log("🔐 Realizando login...")
+        self.entry_grupos = ttk.Entry(entry_frame, font=("Segoe UI", 11))
+        self.entry_grupos.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-options = Options()
-options.add_argument('--no-sandbox')
-options.add_argument('--disable-blink-features=AutomationControlled')
-options.add_argument("--start-maximized")
-options.add_experimental_option("excludeSwitches", ["enable-automation"])
-options.add_experimental_option('useAutomationExtension', False)
+        btn_carregar = ttk.Button(entry_frame, text="📂 Carregar arquivo", command=self.carregar_arquivo)
+        btn_carregar.pack(side=tk.LEFT, padx=5)
 
-user_data_dir = tempfile.mkdtemp()
-options.add_argument(f'--user-data-dir={user_data_dir}')
+        # Botão iniciar
+        self.btn_iniciar = ttk.Button(frame_top, text="▶️ Iniciar Reservas", command=self.start_bot)
+        self.btn_iniciar.pack(pady=(0,10), fill=tk.X)
 
-service = Service(executable_path=chromedriver_path)
-driver = webdriver.Chrome(service=service, options=options)
+        # Frame status/log
+        frame_status = ttk.Frame(root, padding=(10,0))
+        frame_status.pack(fill=tk.BOTH, expand=True)
 
-driver.get(url_pagina)
-sleep(3)
+        # Barra de progresso
+        self.progress = ttk.Progressbar(frame_status, mode='determinate')
+        self.progress.pack(fill=tk.X, pady=(0,5))
 
-driver.find_element(By.XPATH, "//input[@formcontrolname='Usuario']").send_keys(usuario)
-sleep(1)
-driver.find_element(By.XPATH, "//input[@formcontrolname='Senha']").send_keys(senha)
-sleep(1)
-driver.find_element(By.CSS_SELECTOR, "button.submit-button").click()
-sleep(1)
+        # Log com scrolled text
+        self.log_text = tk.Text(frame_status, height=20, font=("Consolas", 10), state=tk.DISABLED, bg="#1e1e1e", fg="#d4d4d4", wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
 
-log("📄 Acessando área de Reserva de Cotas...")
-reserva_cotas = WebDriverWait(driver, 15).until(
-    EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Reserva de Cotas')]"))
-)
-driver.execute_script("arguments[0].click();", reserva_cotas)
-driver.switch_to.window(driver.window_handles[-1])
-sleep(2)
+        # Status label
+        self.status_var = tk.StringVar(value="Aguardando início...")
+        self.status_label = ttk.Label(root, textvariable=self.status_var, font=("Segoe UI", 10, "italic"))
+        self.status_label.pack(side=tk.BOTTOM, fill=tk.X, pady=5, padx=10)
 
-contador = 0
-while True:
-    for grupo in grupos:
-        contador += 1
-        log(f"🔄 Iniciando reserva para o grupo {grupo}...")
-        enviar_telegram(f"🔄 Iniciando reserva para o grupo <code>{grupo}</code>...")
+    def log(self, msg):
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.insert(tk.END, msg + "\n")
+        self.log_text.see(tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def carregar_arquivo(self):
+        tipos = [("Arquivos de texto", "*.txt"), ("CSV", "*.csv"), ("Todos os arquivos", "*.*")]
+        arquivo = filedialog.askopenfilename(title="Selecionar arquivo com grupos", filetypes=tipos)
+        if not arquivo:
+            return
 
         try:
-            nova_reserva = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[.//span[contains(text(), 'Nova Reserva')]]"))
-            )
-            driver.execute_script("arguments[0].click();", nova_reserva)
-            sleep(1)
+            with open(arquivo, "r", encoding="utf-8") as f:
+                texto = f.read()
+            grupos = [linha.strip() for linha in texto.replace(',', '\n').splitlines() if linha.strip()]
+            self.entry_grupos.delete(0, tk.END)
+            self.entry_grupos.insert(0, ", ".join(grupos))
+            self.log(f"✅ Grupos carregados do arquivo: {arquivo}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Não foi possível carregar o arquivo:\n{e}")
 
-            campo_grupo = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, "//input[@formcontrolname='filterGrupos']"))
-            )
-            sleep(1)
+    def start_bot(self):
+        grupos_text = self.entry_grupos.get().strip()
+        if not grupos_text:
+            messagebox.showwarning("⚠️ Atenção", "Informe pelo menos um grupo separado por vírgula.")
+            return
 
-            tentativas, grupo_digitado = 0, False
-            while tentativas < 3 and not grupo_digitado:
-                try:
-                    ActionChains(driver).move_to_element(campo_grupo).click().perform()
-                    sleep(0.5)
+        grupos = [g.strip() for g in grupos_text.split(',') if g.strip()]
+        if not grupos:
+            messagebox.showwarning("⚠️ Atenção", "Nenhum grupo válido informado.")
+            return
 
-                    driver.execute_script("arguments[0].value = '';", campo_grupo)
-                    sleep(0.5)
+        self.log(f"🚀 Iniciando bot para grupos: {grupos}")
+        self.status_var.set("Executando...")
+        self.progress['value'] = 0
+        self.btn_iniciar.config(state=tk.DISABLED)
 
-                    for char in grupo:
-                        campo_grupo.send_keys(char)
-                        sleep(0.1)
+        def update_progress(value):
+            # value float 0.0 a 1.0
+            self.progress['value'] = value * 100
 
-                    driver.execute_script("""
-                        const el = arguments[0];
-                        ['input', 'change', 'keydown', 'keyup'].forEach(evt =>
-                            el.dispatchEvent(new Event(evt, { bubbles: true }))
-                        );
-                    """, campo_grupo)
-                    sleep(1)
-
-                    valor_atual = campo_grupo.get_attribute("value").strip()
-                    if valor_atual == grupo:
-                        grupo_digitado = True
-                        log(f"✅ Grupo {grupo} digitado no campo de busca com sucesso.")
-                        enviar_telegram(f"✅ Grupo <b>{grupo}</b> digitado no campo de busca com sucesso.")
-                    else:
-                        tentativas += 1
-                        log(f"⚠️ Campo preenchido incorretamente ('{valor_atual}'), tentando novamente...")
-                except Exception as e:
-                    tentativas += 1
-                    log(f"Erro ao tentar digitar grupo {grupo}: {e}")
-
-            if not grupo_digitado:
-                enviar_telegram(f"❌ Falha ao digitar o grupo <b>{grupo}</b> após 3 tentativas.")
-                continue
-
-            log(f"🔍 Procurando célula do grupo {grupo}...")
+        def run_bot():
             try:
-                celulas = WebDriverWait(driver, 10).until(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "mat-cell.cdk-column-dataCadastro"))
-                )
+                iniciar_reservas(grupos, self, progress_callback=update_progress)
             except Exception as e:
-                log(f"❌ Timeout ou erro ao buscar células: {e}")
-                continue
+                self.log(f"❌ Erro geral: {e}")
+            finally:
+                self.status_var.set("Processo finalizado.")
+                self.progress['value'] = 100
+                self.btn_iniciar.config(state=tk.NORMAL)
 
-            grupo_encontrado = False
-            for idx, celula in enumerate(celulas):
-                texto = celula.text.strip()
-                log(f" - Celula[{idx}]: '{texto}'")
-                if texto.endswith(grupo):
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", celula)
-                    sleep(0.5)
-                    driver.execute_script("arguments[0].click();", celula)
-                    grupo_encontrado = True
-                    break
+        Thread(target=run_bot, daemon=True).start()
 
-            if not grupo_encontrado:
-                enviar_telegram(f"⚠️ Grupo <b>{grupo}</b> não localizado.")
-                try:
-                    botao_fechar_modal = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'mat-icon-button') and .//mat-icon[text()='close']]"))
-                    )
-                    botao_fechar_modal.click()
-                    sleep(1)
-                except:
-                    pass
-                continue
-
-            log("🤖 Iniciando resolução do reCAPTCHA...")
-            token = resolver_recaptcha(api_key, site_key, url_pagina)
-            if token:
-                driver.execute_script("""
-                    let field = document.getElementById('g-recaptcha-response');
-                    if (!field) {
-                        field = document.createElement('textarea');
-                        field.id = 'g-recaptcha-response';
-                        field.name = 'g-recaptcha-response';
-                        field.style = 'display:none';
-                        document.body.appendChild(field);
-                    }
-                    field.innerHTML = arguments[0];
-                    field.dispatchEvent(new Event('input', { bubbles: true }));
-                    field.dispatchEvent(new Event('change', { bubbles: true }));
-                """, token)
-                sleep(3)
-
-                botao_reservar = WebDriverWait(driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Reservar')]"))
-                )
-                driver.execute_script("arguments[0].click();", botao_reservar)
-                enviar_telegram(f"✅ Grupo <b>{grupo}</b> reservado com sucesso.")
-            else:
-                enviar_telegram(f"❌ Falha ao resolver o reCAPTCHA para o grupo <b>{grupo}</b>.")
-        except Exception as erro:
-            enviar_telegram(f"⚠️ Erro inesperado com o grupo <b>{grupo}</b>: {erro}")
-
-        sleep(3)
-
-    enviar_telegram(f"🔁 Ciclo finalizado às {datetime.now().strftime('%H:%M:%S')} após verificar {contador} grupos.")
-    driver.refresh()
-    sleep(5)
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ReservaBotApp(root)
+    root.mainloop()
